@@ -5,13 +5,13 @@ fullnameOverride: ""
 nameOverride: ""
 
 # The number of replicas to create (has no effect if autoscaling enabled)
-replicas: 1
+replicas: 6
 
 image:
   # The Keycloak image repository
   repository: docker.io/jboss/keycloak
   # Overrides the Keycloak image tag whose default is the chart version
-  tag: ""
+  tag: "11.0.2"
   # The Keycloak image pull policy
   pullPolicy: IfNotPresent
 
@@ -48,16 +48,15 @@ serviceAccount:
   imagePullSecrets: []
 
 rbac:
-  create: false
-  rules: []
-  # RBAC rules for KUBE_PING
-  #  - apiGroups:
-  #      - ""
-  #    resources:
-  #      - pods
-  #    verbs:
-  #      - get
-  #      - list
+  create: true
+  rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
 
 # SecurityContext for the entire Pod. Every container running in the Pod will inherit this SecurityContext. This might be relevant when other components of the environment inject additional containers into running Pods (service meshes are the most prominent example for this)
 podSecurityContext:
@@ -69,7 +68,125 @@ securityContext:
   runAsNonRoot: true
 
 # Additional init containers, e. g. for providing custom themes
-extraInitContainers: ""
+extraInitContainers: |
+  - name: "trust-ca-certificate"
+    image: "rdcarrera/add-ca-to-cacert"
+    imagePullPolicy: Always
+    env:
+    - name: CACERT_DEST
+      value: "/test"
+    volumeMounts:
+    - name: cacerts-binary
+      mountPath: /test
+    - name: bawag-ca-certificate
+      mountPath: /certs/ca.pem
+      subPath: bawag-ca.pem
+    - name: cas-cert
+      mountPath: /certs/cas-dev.pem
+      subPath: cas-dev.pem
+    - name: bawag-ca-certificate
+      mountPath: /certs/ldap.pem
+      subPath: ldap.pem
+    - name: bawag-ca-certificate
+      mountPath: /certs/ldap2.pem
+      subPath: ldap2.pem
+  - name: extensions
+    image: alpine
+    imagePullPolicy: IfNotPresent
+    command:
+      - sh
+    args:
+      - -c
+      - |
+        echo "Copying extensions..."
+        wget -O /deployments/keycloak-metrics-spi.jar https://github.com/aerogear/keycloak-metrics-spi/releases/download/2.0.1/keycloak-metrics-spi-2.0.1.jar
+    volumeMounts:
+      - name: deployments
+        mountPath: /deployments
+  - name: spi
+    image: acraksdev02.azurecr.io/devops/spideployer:0.0.4
+    imagePullPolicy: Always
+    command:
+      - sh
+    args:
+      - -c
+      - |
+        echo "Copying spis..."
+        cp -R /deployments/* /kcdeployments
+    volumeMounts:
+      - name: deployments
+        mountPath: /kcdeployments
+  - name: themes
+    image: acraksdev02.azurecr.io/devops/themedeployer:0.0.9
+    imagePullPolicy: Always
+    command:
+      - sh
+    args:
+      - -c
+      - |
+        echo "Copying themes..."
+        cp -R /theme/klar-keycloak-theme/* /theme-klar
+        cp -R /theme/leasing-keycloak-theme/* /theme-leasing
+        cp -R /theme/keycloak-theme/* /theme-eservice
+        cp -R /theme/pos-financing-keycloak-theme/* /pos-financing-keycloak-theme
+        cp -R /theme/documents-static-files-keyclock-theme/* /documents-static-files-keyclock-theme
+    volumeMounts:
+      - name: theme-klar
+        mountPath: /theme-klar
+      - name: theme-leasing
+        mountPath: /theme-leasing
+      - name: theme-eservice
+        mountPath: /theme-eservice
+      - name: pos-financing-keycloak-theme
+        mountPath: /pos-financing-keycloak-theme
+      - name: documents-static-files-keyclock-theme
+        mountPath: /documents-static-files-keyclock-theme
+# Add additional volumes, e. g. for custom themes
+extraVolumes: |
+  - name: bawag-ca-certificate
+    configMap:
+      name: bawag-ca-certificate
+  - name: cas-cert
+    configMap:
+      name: cas-dev-certificate
+  - name: cacerts-binary
+    emptyDir: {}
+  - name: deployments
+    emptyDir: {}
+  - name: theme-klar
+    emptyDir: {}
+  - name: theme-leasing
+    emptyDir: {}
+  - name: theme-eservice
+    emptyDir: {}
+  - name: pos-financing-keycloak-theme
+    emptyDir: {}
+  - name: documents-static-files-keyclock-theme
+    emptyDir: {}
+  - name: db-creds
+    secret:
+      secretName: keycloak-db-secret
+# Add additional volumes mounts, e. g. for custom themes
+extraVolumeMounts: |
+  - name: cacerts-binary
+    mountPath: /etc/pki/ca-trust/extracted/java/cacerts
+    subPath: cacerts
+    readOnly: true
+  - name: deployments
+    mountPath: /opt/jboss/keycloak/standalone/deployments
+  - name: theme-klar
+    mountPath: /opt/jboss/keycloak/themes/klar-keycloak-theme
+  - name: theme-leasing
+    mountPath: /opt/jboss/keycloak/themes/leasing-keycloak-theme
+  - name: theme-eservice
+    mountPath: /opt/jboss/keycloak/themes/eservice-keycloak-theme
+  - name: pos-financing-keycloak-theme
+    mountPath: /opt/jboss/keycloak/themes/pos-financing-keycloak-theme
+  - name: documents-static-files-keyclock-theme
+    mountPath: /opt/jboss/keycloak/themes/documents-static-files-keyclock-theme
+  - name: db-creds
+    mountPath: /secrets/db-creds
+    readOnly: true
 
 # Additional sidecar containers, e. g. for a database proxy, such as Google's cloudsql-proxy
 extraContainers: ""
@@ -84,7 +201,7 @@ lifecycleHooks: |
 #        - ls
 
 # Termination grace period in seconds for Keycloak shutdown. Clusters with a large cache might need to extend this to give Infinispan more time to rebalance
-terminationGracePeriodSeconds: 60
+terminationGracePeriodSeconds: 120
 
 # The internal Kubernetes cluster domain
 clusterDomain: cluster.local
@@ -96,15 +213,34 @@ command: []
 args: []
 
 # Additional environment variables for Keycloak
-extraEnv: ""
+extraEnv: |
   # - name: KEYCLOAK_LOGLEVEL
   #   value: DEBUG
   # - name: WILDFLY_LOGLEVEL
   #   value: DEBUG
-  # - name: CACHE_OWNERS_COUNT
-  #   value: "2"
-  # - name: CACHE_OWNERS_AUTH_SESSIONS_COUNT
-  #   value: "2"
+  - name: JGROUPS_DISCOVERY_PROTOCOL
+    value: kubernetes.KUBE_PING
+  - name: KUBERNETES_NAMESPACE
+    valueFrom:
+      fieldRef:
+        apiVersion: v1
+        fieldPath: metadata.namespace
+  - name: CACHE_OWNERS_COUNT
+    value: "2"
+  - name: CACHE_OWNERS_AUTH_SESSIONS_COUNT
+    value: "2"
+  - name: DB_VENDOR
+    value: postgres
+  - name: DB_ADDR
+    value: 10.237.220.8
+  - name: DB_PORT
+    value: "6432"
+  - name: DB_DATABASE
+    value: keycloak
+  - name: DB_USER_FILE
+    value: /secrets/db-creds/username
+  - name: DB_PASSWORD_FILE
+    value: /secrets/db-creds/password
 
 # Additional environment variables for Keycloak mapped from Secret or ConfigMap
 extraEnvFrom: ""
@@ -142,7 +278,11 @@ affinity: |
 nodeSelector: {}
 
 # Node taints to tolerate
-tolerations: []
+tolerations:
+- key: "type"
+  operator: "Equal"
+  value: "toolset"
+
 
 # Additional Pod labels
 podLabels: {}
@@ -185,11 +325,6 @@ startupScripts:
   #
   # echo 'Hello from my custom startup script!'
 
-# Add additional volumes, e. g. for custom themes
-extraVolumes: ""
-
-# Add additional volumes mounts, e. g. for custom themes
-extraVolumeMounts: ""
 
 # Add additional ports, e. g. for admin console or exposing JGroups ports
 extraPorts: []
@@ -240,14 +375,16 @@ service:
 
 ingress:
   # If `true`, an Ingress is created
-  enabled: false
+  enabled: true
   # The Service port targeted by the Ingress
   servicePort: http
   # Ingress annotations
-  annotations: {}
+  annotations:
     ## Resolve HTTP 502 error using ingress-nginx:
     ## See https://www.ibm.com/support/pages/502-error-ingress-keycloak-response
-    # nginx.ingress.kubernetes.io/proxy-buffer-size: 128k
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 128k
+    kubernetes.io/ingress.class: nginx
+
 
   # Additional Ingress labels
   labels: {}
@@ -255,15 +392,14 @@ ingress:
   rules:
     -
       # Ingress host
-      host: '{{ .Release.Name }}.keycloak.example.com'
+      host: keycloak.tool.dev.libra.bawag.com
       # Paths for the host
       paths:
         - /
   # TLS configuration
   tls:
     - hosts:
-        - keycloak.example.com
-      secretName: ""
+        - keycloak.tool.dev.libra.bawag.com
 
 ## Network policy configuration
 networkPolicy:
@@ -322,7 +458,7 @@ pgchecker:
 
 postgresql:
   # If `true`, the Postgresql dependency is enabled
-  enabled: true
+  enabled: false
   # PostgreSQL User to create
   postgresqlUsername: keycloak
   # PostgreSQL Password for the new user
